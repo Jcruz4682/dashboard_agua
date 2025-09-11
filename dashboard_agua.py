@@ -139,15 +139,19 @@ def cargar_shapefile(nombre, solo_poligonos=False):
             if g is None:
                 return None
             g = make_valid(g)
-            # Si es GeometryCollection, quedarnos solo con polígonos
+            # Si es GeometryCollection, extraer solo polígonos
             if g.geom_type == "GeometryCollection":
                 polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
                 if not polys:
                     return None
                 g = unary_union(polys)
+            # Forzar a quedarse solo con polígonos
+            if g.geom_type not in ["Polygon", "MultiPolygon"]:
+                return None
             return g
 
         gdf["geometry"] = gdf["geometry"].apply(fix_geom)
+        gdf = gdf[~gdf["geometry"].isna()].copy()
 
         if solo_poligonos:
             def to_multipolygon(geom):
