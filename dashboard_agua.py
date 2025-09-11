@@ -30,15 +30,16 @@ if not st.session_state["auth"]:
     st.stop()
 
 # --- TITULO PRINCIPAL ---
-st.markdown("<h2 style='text-align:center;'>MODELO TÉCNICO-OPERATIVO DE REDISTRIBUCIÓN TEMPORAL DE USO DE AGUA INDUSTRIAL PARA EMERGENCIAS HÍDRICAS</h2>", unsafe_allow_html=True)
+st.markdown(
+    "<h2 style='text-align:center;'>"
+    "MODELO TÉCNICO-OPERATIVO DE REDISTRIBUCIÓN TEMPORAL DE USO DE AGUA INDUSTRIAL PARA EMERGENCIAS HÍDRICAS"
+    "</h2>", unsafe_allow_html=True)
 
 # --- RUTA DE DATOS ---
-# Ahora siempre busca en la carpeta "Datos_qgis" que debe estar junto al script
 data_dir = os.path.join(os.path.dirname(__file__), "Datos_qgis")
 if not os.path.exists(data_dir):
     st.error(f"No se encontró la carpeta de datos: {data_dir}")
     st.stop()
-
 
 # --- CONFIG CISERNAS ---
 cisternas = {"19 m³": {"capacidad": 19}, "34 m³": {"capacidad": 34}}
@@ -70,10 +71,13 @@ def asignar_pozos(geom_obj, demanda, escenario, tipo_cisterna, pozos_gdf):
     pozos_tmp = []
     for _, pozo in pozos_gdf.iterrows():
         q_m3_dia = float(pozo.get("Q_m3_dia", 0.0))
-        if q_m3_dia > 0:
-            dist_km = pozo.geometry.distance(geom_obj) * 111.0
-            aporte_disp = q_m3_dia * (escenario / 100.0)
-            pozos_tmp.append((dist_km, pozo.get("ID","NA"), aporte_disp, pozo.geometry))
+        if q_m3_dia > 0 and pozo.geometry is not None:
+            try:
+                dist_km = pozo.geometry.distance(geom_obj) * 111.0
+                aporte_disp = q_m3_dia * (escenario / 100.0)
+                pozos_tmp.append((dist_km, pozo.get("ID","NA"), aporte_disp, pozo.geometry))
+            except Exception:
+                continue
     pozos_tmp.sort(key=lambda x: x[0])
     for dist_km, pozo_id, aporte_disp, geom in pozos_tmp:
         if restante <= 0: break
@@ -94,20 +98,20 @@ def mostrar_kpis(nombre, demanda, restante, viajes, costo, consumo):
     fila2[0].metric("🚛 Viajes", f"{viajes}")
     fila2[1].metric("💵 Costo (S/)", f"{costo:,.2f}")
     fila2[2].metric("⛽ Consumo (gal)", f"{consumo:,.1f}")
-    st.caption("⚠️ Los costos presentados corresponden únicamente al consumo de combustible. No incluyen cisternas ni personal operario.")
+    st.caption("⚠️ Costos: solo combustible. No incluye cisternas ni personal.")
 
 def agregar_conclusion(contexto, nombre, demanda, restante, viajes, costo, consumo, pozos):
     if restante > 0:
         st.error(f"**Conclusión:** En **situación de emergencia hídrica en el {contexto.lower()} {nombre}**, "
                  f"se requiere una demanda de **{demanda:.2f} m³/día**. Con los pozos seleccionados, "
-                 f"**no se logra cubrir la demanda total**, quedando un faltante de **{restante:.2f} m³/día**. "
-                 f"Se emplean **{len(pozos)} pozos**, con **{viajes} viajes** (ida y vuelta donde corresponde), "
-                 f"un consumo de **{consumo:.1f} gal** de combustible y un **costo total de combustible** de **S/ {costo:,.2f}**.")
+                 f"**no se logra cubrir la demanda total**, faltando **{restante:.2f} m³/día**. "
+                 f"Se emplean **{len(pozos)} pozos**, con **{viajes} viajes**, "
+                 f"consumo de **{consumo:.1f} gal** y **costo combustible** de **S/ {costo:,.2f}**.")
     else:
         st.success(f"**Conclusión:** En **situación de emergencia hídrica en el {contexto.lower()} {nombre}**, "
                    f"se requiere una demanda de **{demanda:.2f} m³/día**. Con los pozos seleccionados, "
-                   f"**se cubre la demanda total**. Se emplean **{len(pozos)} pozos**, con **{viajes} viajes** (ida y vuelta donde corresponde), "
-                   f"un consumo de **{consumo:.1f} gal** de combustible y un **costo total de combustible** de **S/ {costo:,.2f}**.")
+                   f"**se cubre la demanda total**. Se emplean **{len(pozos)} pozos**, con **{viajes} viajes**, "
+                   f"consumo de **{consumo:.1f} gal** y **costo combustible** de **S/ {costo:,.2f}**.")
 
 def agregar_leyenda(m):
     legend_html = """
@@ -125,50 +129,63 @@ def agregar_leyenda(m):
     return m
 
 # ========= CARGA DE DATOS =========
-sectores_gdf = gpd.read_file(os.path.join(data_dir, "Sectores_F1_ENFEN.shp")).to_crs(epsg=4326)
-distritos_gdf = gpd.read_file(os.path.join(data_dir, "DISTRITOS_Final.shp")).to_crs(epsg=4326)
-pozos_gdf = gpd.read_file(os.path.join(data_dir, "Pozos.shp")).to_crs(epsg=4326)
+def cargar_shapefile(nombre):
+    try:
+        gdf = gpd.read_file(os.path.join(data_dir, nombre))
+        gdf["geometry"] = gdf["geometry"].buffer(0)   # reparar geometrías inválidas
+        return gdf.to_crs(epsg=4326)
+    except Exception as e:
+        st.error(f"Error al cargar {nombre}: {e}")
+        return gpd.GeoDataFrame(columns=["geometry"])
 
-# 🔧 Reparar geometrías inválidas automáticamente
-sectores_gdf["geometry"] = sectores_gdf["geometry"].buffer(0)
-distritos_gdf["geometry"] = distritos_gdf["geometry"].buffer(0)
-pozos_gdf["geometry"] = pozos_gdf["geometry"].buffer(0)
+sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp")
+distritos_gdf = cargar_shapefile("DISTRITOS_Final.shp")
+pozos_gdf = cargar_shapefile("Pozos.shp")
 
-# Cargar CSV
-demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
-demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
+# Cargar CSVs
+try:
+    demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
+    demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
+except Exception as e:
+    st.error(f"No se pudo cargar CSVs: {e}")
+    st.stop()
 
+# Normalizar claves y merge
+if not sectores_gdf.empty:
+    sectores_gdf["ZONENAME"] = sectores_gdf["ZONENAME"].apply(normalizar)
+    demandas_sectores["ZONENAME"] = demandas_sectores["ZONENAME"].apply(normalizar)
+    sectores_gdf = sectores_gdf.merge(demandas_sectores[["ZONENAME","Demanda_m3_dia"]], on="ZONENAME", how="left")
 
-# ========= SECTOR =========
-if modo == "Sector":
+if not distritos_gdf.empty:
+    distritos_gdf["NOMBDIST"] = distritos_gdf["NOMBDIST"].apply(normalizar)
+    demandas_distritos["Distrito"] = demandas_distritos["Distrito"].apply(normalizar)
+    distritos_gdf = distritos_gdf.merge(
+        demandas_distritos[["Distrito","Demanda_Distrito_m3_30_lhd"]],
+        left_on="NOMBDIST", right_on="Distrito", how="left")
+
+# ========= LÓGICA =========
+if modo == "Sector" and not sectores_gdf.empty:
     sectores_ids = sorted(sectores_gdf["ZONENAME"].dropna().unique().tolist())
     sector_sel = st.sidebar.selectbox("Selecciona un sector", sectores_ids)
     row = sectores_gdf[sectores_gdf["ZONENAME"] == sector_sel].iloc[0]
     demanda = float(row.get("Demanda_m3_dia",0))
-    geom = row.geometry
-    resultados, restante, viajes, costo, consumo = asignar_pozos(geom.centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
+    resultados, restante, viajes, costo, consumo = asignar_pozos(row.geometry.centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
 
     mostrar_kpis(f"📍 Sector {sector_sel}", demanda, restante, viajes, costo, consumo)
 
-    # Mapa
-    m = folium.Map(location=[geom.centroid.y, geom.centroid.x], zoom_start=13, tiles="cartodbpositron")
-    folium.GeoJson(geom, style_function=lambda x: {"color":"red","fillOpacity":0.3}).add_to(m)
+    m = folium.Map(location=[row.geometry.centroid.y, row.geometry.centroid.x], zoom_start=13, tiles="cartodbpositron")
+    folium.GeoJson(row.geometry, style_function=lambda x: {"color":"red","fillOpacity":0.3}).add_to(m)
     for _, aporte, v, c, cons, dist, g in resultados:
         folium.CircleMarker([g.y, g.x], radius=6, color="blue", fill=True).add_to(m)
     m = agregar_leyenda(m)
     st_folium(m, width=900, height=500)
 
-    # Tabla
     df_res = pd.DataFrame(resultados, columns=["Pozo_ID","Aporte","Viajes","Costo","Consumo","Dist_km","geom"]).drop(columns="geom")
     st.dataframe(df_res)
-
-    # Gráfico
     st.plotly_chart(px.bar(df_res, x="Pozo_ID", y="Aporte", title="Aporte por pozo (m³/día)"), use_container_width=True)
-
     agregar_conclusion("sector", sector_sel, demanda, restante, viajes, costo, consumo, resultados)
 
-# ========= DISTRITO =========
-elif modo == "Distrito":
+elif modo == "Distrito" and not distritos_gdf.empty:
     distritos_ids = sorted(distritos_gdf["NOMBDIST"].dropna().unique().tolist())
     dist_sel = st.sidebar.selectbox("Selecciona un distrito", distritos_ids)
     row = distritos_gdf[distritos_gdf["NOMBDIST"] == dist_sel].iloc[0]
@@ -177,7 +194,6 @@ elif modo == "Distrito":
 
     mostrar_kpis(f"🏙️ Distrito {dist_sel}", demanda, restante, viajes, costo, consumo)
 
-    # Mapa
     m = folium.Map(location=[row.geometry.centroid.y, row.geometry.centroid.x], zoom_start=11, tiles="cartodbpositron")
     folium.GeoJson(row.geometry, style_function=lambda x: {"color":"green","fillOpacity":0.2}).add_to(m)
     for _, aporte, v, c, cons, dist, g in resultados:
@@ -185,17 +201,12 @@ elif modo == "Distrito":
     m = agregar_leyenda(m)
     st_folium(m, width=900, height=500)
 
-    # Tabla
     df_res = pd.DataFrame(resultados, columns=["Pozo_ID","Aporte","Viajes","Costo","Consumo","Dist_km","geom"]).drop(columns="geom")
     st.dataframe(df_res)
-
-    # Gráfico
     st.plotly_chart(px.bar(df_res, x="Pozo_ID", y="Aporte", title="Aporte por pozo (m³/día)"), use_container_width=True)
-
     agregar_conclusion("distrito", dist_sel, demanda, restante, viajes, costo, consumo, resultados)
 
-# ========= COMBINACIÓN DE DISTRITOS =========
-elif modo == "Combinación Distritos":
+elif modo == "Combinación Distritos" and not distritos_gdf.empty:
     criticos = ["ATE","LURIGANCHO","SAN_JUAN_DE_LURIGANCHO","EL_AGUSTINO","SANTA_ANITA"]
     seleccion = st.sidebar.multiselect("Selecciona distritos críticos", criticos, default=criticos)
     if seleccion:
@@ -206,7 +217,6 @@ elif modo == "Combinación Distritos":
 
         mostrar_kpis(f"🌀 Combinación: {', '.join(seleccion)}", demanda, restante, viajes, costo, consumo)
 
-        # Mapa
         m = folium.Map(location=[geom_union.centroid.y, geom_union.centroid.x], zoom_start=10, tiles="cartodbpositron")
         folium.GeoJson(geom_union, style_function=lambda x: {"color":"purple","fillOpacity":0.2}).add_to(m)
         for _, aporte, v, c, cons, dist, g in resultados:
@@ -214,16 +224,11 @@ elif modo == "Combinación Distritos":
         m = agregar_leyenda(m)
         st_folium(m, width=900, height=500)
 
-        # Tabla
         df_res = pd.DataFrame(resultados, columns=["Pozo_ID","Aporte","Viajes","Costo","Consumo","Dist_km","geom"]).drop(columns="geom")
         st.dataframe(df_res)
-
-        # Gráfico
         st.plotly_chart(px.bar(df_res, x="Pozo_ID", y="Aporte", title="Aporte por pozo (m³/día)"), use_container_width=True)
-
         agregar_conclusion("combinación crítica de distritos", ", ".join(seleccion), demanda, restante, viajes, costo, consumo, resultados)
 
-# ========= RESUMEN GENERAL =========
 elif modo == "Resumen general":
     st.subheader("📊 Resumen general")
 
@@ -256,7 +261,11 @@ elif modo == "Resumen general":
     rows = distritos_gdf[distritos_gdf["NOMBDIST"].isin(criticos)]
     demanda = rows["Demanda_Distrito_m3_30_lhd"].sum()
     _, restante, viajes, costo, consumo = asignar_pozos(unary_union(rows.geometry).centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
+
     st.markdown("### 🌀 Combinación crítica de distritos")
-    df_comb = pd.DataFrame({"Distrito":criticos, "Demanda":[rows.loc[rows["NOMBDIST"]==d,"Demanda_Distrito_m3_30_lhd"].values[0] for d in criticos]})
+    df_comb = pd.DataFrame({
+        "Distrito": criticos,
+        "Demanda": [rows.loc[rows["NOMBDIST"]==d,"Demanda_Distrito_m3_30_lhd"].values[0] for d in criticos]
+    })
     st.dataframe(df_comb)
     st.plotly_chart(px.bar(df_comb, x="Distrito", y="Demanda", title="Demanda en combinación crítica"), use_container_width=True)
