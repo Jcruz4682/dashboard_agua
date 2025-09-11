@@ -169,9 +169,9 @@ def dibujar_pozos(resultados, m):
     return m
 
 # ========= CARGA DE DATOS =========
-sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp", solo_poligonos=True)
-distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio.shp", solo_poligonos=True)
-pozos_gdf = cargar_shapefile("Pozos.shp")
+sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN_limpio.shp", solo_poligonos=True)
+distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio_limpio.shp", solo_poligonos=True)
+pozos_gdf = cargar_shapefile("Pozos_limpio.shp")
 
 try:
     demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
@@ -179,6 +179,7 @@ try:
 except Exception as e:
     st.error(f"No se pudo cargar CSVs: {e}")
     st.stop()
+
 
 # --- Merge con validaciones ---
 if not sectores_gdf.empty and "ZONENAME" in sectores_gdf.columns:
