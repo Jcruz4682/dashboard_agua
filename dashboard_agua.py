@@ -181,35 +181,20 @@ def cargar_shapefile(nombre, solo_poligonos=False):
         return gpd.GeoDataFrame(columns=["geometry"])
 
 
-
-
-
 # ========= CARGA DE DATOS =========
-sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp", solo_poligonos=True)
-distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio.shp", solo_poligonos=True)
-pozos_gdf    = cargar_shapefile("Pozos.shp")
+sectores_gdf  = gpd.read_file(os.path.join(data_dir, "Sectores_F1_ENFEN.gpkg"))
+distritos_gdf = gpd.read_file(os.path.join(data_dir, "DISTRITOS_Final_limpio.gpkg"))
+pozos_gdf     = gpd.read_file(os.path.join(data_dir, "Pozos.gpkg"))
 
-try:
-    demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
-    demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
-except Exception as e:
-    st.error(f"No se pudo cargar CSVs: {e}")
-    st.stop()
+# Filtrar solo polígonos en sectores/distritos
+sectores_gdf  = sectores_gdf[sectores_gdf.geometry.type.isin(["Polygon","MultiPolygon"])].copy()
+distritos_gdf = distritos_gdf[distritos_gdf.geometry.type.isin(["Polygon","MultiPolygon"])].copy()
 
+# CRS correcto
+sectores_gdf  = sectores_gdf.to_crs(epsg=4326)
+distritos_gdf = distritos_gdf.to_crs(epsg=4326)
+pozos_gdf     = pozos_gdf.to_crs(epsg=4326)
 
-# --- Merge con validaciones ---
-if not sectores_gdf.empty and "ZONENAME" in sectores_gdf.columns:
-    sectores_gdf["ZONENAME"] = sectores_gdf["ZONENAME"].apply(normalizar)
-    demandas_sectores["ZONENAME"] = demandas_sectores["ZONENAME"].apply(normalizar)
-    sectores_gdf = sectores_gdf.merge(demandas_sectores[["ZONENAME","Demanda_m3_dia"]], on="ZONENAME", how="left")
-
-if not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
-    distritos_gdf["NOMBDIST"] = distritos_gdf["NOMBDIST"].apply(normalizar)
-    demandas_distritos["Distrito"] = demandas_distritos["Distrito"].apply(normalizar)
-    distritos_gdf = distritos_gdf.merge(
-        demandas_distritos[["Distrito","Demanda_Distrito_m3_30_lhd"]],
-        left_on="NOMBDIST", right_on="Distrito", how="left"
-    )
 
 # ========= LÓGICA PRINCIPAL =========
 if modo == "Sector" and not sectores_gdf.empty:
