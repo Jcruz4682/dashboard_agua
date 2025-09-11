@@ -134,39 +134,42 @@ def cargar_shapefile(nombre, solo_poligonos=False):
     try:
         gdf = gpd.read_file(os.path.join(data_dir, nombre))
         gdf = gdf[~gdf["geometry"].isna()].copy()
-        gdf["geometry"] = gdf["geometry"].apply(lambda g: make_valid(g) if g is not None else None)
 
-        def to_multipolygon(geom):
-            if geom is None:
+        def fix_geom(g):
+            if g is None:
                 return None
-            if geom.geom_type == "Polygon":
-                return MultiPolygon([geom])
-            if geom.geom_type == "MultiPolygon":
-                return geom
-            return None
+            g = make_valid(g)
+            # Si es GeometryCollection, quedarnos solo con polígonos
+            if g.geom_type == "GeometryCollection":
+                polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
+                if not polys:
+                    return None
+                g = unary_union(polys)
+            return g
+
+        gdf["geometry"] = gdf["geometry"].apply(fix_geom)
 
         if solo_poligonos:
+            def to_multipolygon(geom):
+                if geom is None:
+                    return None
+                if geom.geom_type == "Polygon":
+                    return MultiPolygon([geom])
+                if geom.geom_type == "MultiPolygon":
+                    return geom
+                return None
             gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
             gdf = gdf[~gdf["geometry"].isna()].copy()
 
+        # Buffer(0) como último fix
         gdf["geometry"] = gdf["geometry"].buffer(0)
+
         return gdf.to_crs(epsg=4326)
+
     except Exception as e:
         st.error(f"Error al cargar {nombre}: {e}")
         return gpd.GeoDataFrame(columns=["geometry"])
 
-def dibujar_pozos(resultados, m):
-    for _, aporte, v, c, cons, dist, g in resultados:
-        if g is not None:
-            try:
-                if isinstance(g, Point):
-                    lat, lon = g.y, g.x
-                else:
-                    lat, lon = g.centroid.y, g.centroid.x
-                folium.CircleMarker([lat, lon], radius=6, color="blue", fill=True).add_to(m)
-            except Exception:
-                continue
-    return m
 
 # ========= CARGA DE DATOS =========
 sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN_limpio.shp", solo_poligonos=True)
