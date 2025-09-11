@@ -10,7 +10,7 @@ import pandas as pd
 import geopandas as gpd
 import folium
 from shapely.ops import unary_union
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon, MultiPolygon
 from shapely.validation import make_valid
 from streamlit_folium import st_folium
 import plotly.express as px
@@ -130,12 +130,14 @@ def agregar_leyenda(m):
     m.get_root().html.add_child(folium.Element(legend_html))
     return m
 
-def cargar_shapefile(nombre):
+def cargar_shapefile(nombre, solo_poligonos=False):
     try:
         gdf = gpd.read_file(os.path.join(data_dir, nombre))
         gdf = gdf[~gdf["geometry"].isna()].copy()
         gdf["geometry"] = gdf["geometry"].apply(lambda g: make_valid(g) if g is not None else None)
         gdf["geometry"] = gdf["geometry"].buffer(0)
+        if solo_poligonos:
+            gdf = gdf[gdf.geometry.apply(lambda g: isinstance(g, (Polygon, MultiPolygon)))]
         return gdf.to_crs(epsg=4326)
     except Exception as e:
         st.error(f"Error al cargar {nombre}: {e}")
@@ -155,8 +157,8 @@ def dibujar_pozos(resultados, m):
     return m
 
 # ========= CARGA DE DATOS =========
-sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp")
-distritos_gdf = cargar_shapefile("DISTRITOS_Final.shp")
+sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp", solo_poligonos=True)
+distritos_gdf = cargar_shapefile("DISTRITOS_Final.shp", solo_poligonos=True)
 pozos_gdf = cargar_shapefile("Pozos.shp")
 
 try:
@@ -166,17 +168,19 @@ except Exception as e:
     st.error(f"No se pudo cargar CSVs: {e}")
     st.stop()
 
-if not sectores_gdf.empty:
+# --- Merge con validaciones ---
+if not sectores_gdf.empty and "ZONENAME" in sectores_gdf.columns:
     sectores_gdf["ZONENAME"] = sectores_gdf["ZONENAME"].apply(normalizar)
     demandas_sectores["ZONENAME"] = demandas_sectores["ZONENAME"].apply(normalizar)
     sectores_gdf = sectores_gdf.merge(demandas_sectores[["ZONENAME","Demanda_m3_dia"]], on="ZONENAME", how="left")
 
-if not distritos_gdf.empty:
+if not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
     distritos_gdf["NOMBDIST"] = distritos_gdf["NOMBDIST"].apply(normalizar)
     demandas_distritos["Distrito"] = demandas_distritos["Distrito"].apply(normalizar)
     distritos_gdf = distritos_gdf.merge(
         demandas_distritos[["Distrito","Demanda_Distrito_m3_30_lhd"]],
-        left_on="NOMBDIST", right_on="Distrito", how="left")
+        left_on="NOMBDIST", right_on="Distrito", how="left"
+    )
 
 # ========= LÓGICA =========
 if modo == "Sector" and not sectores_gdf.empty:
@@ -199,7 +203,7 @@ if modo == "Sector" and not sectores_gdf.empty:
     st.plotly_chart(px.bar(df_res, x="Pozo_ID", y="Aporte", title="Aporte por pozo (m³/día)"), use_container_width=True)
     agregar_conclusion("sector", sector_sel, demanda, restante, viajes, costo, consumo, resultados)
 
-elif modo == "Distrito" and not distritos_gdf.empty:
+elif modo == "Distrito" and not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
     distritos_ids = sorted(distritos_gdf["NOMBDIST"].dropna().unique().tolist())
     dist_sel = st.sidebar.selectbox("Selecciona un distrito", distritos_ids)
     row = distritos_gdf[distritos_gdf["NOMBDIST"] == dist_sel].iloc[0]
@@ -219,7 +223,7 @@ elif modo == "Distrito" and not distritos_gdf.empty:
     st.plotly_chart(px.bar(df_res, x="Pozo_ID", y="Aporte", title="Aporte por pozo (m³/día)"), use_container_width=True)
     agregar_conclusion("distrito", dist_sel, demanda, restante, viajes, costo, consumo, resultados)
 
-elif modo == "Combinación Distritos" and not distritos_gdf.empty:
+elif modo == "Combinación Distritos" and not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
     criticos = ["ATE","LURIGANCHO","SAN_JUAN_DE_LURIGANCHO","EL_AGUSTINO","SANTA_ANITA"]
     seleccion = st.sidebar.multiselect("Selecciona distritos críticos", criticos, default=criticos)
     if seleccion:
@@ -247,7 +251,7 @@ elif modo == "Resumen general":
     # ---- Sectores ----
     resumen_sectores = []
     for _, row in sectores_gdf.iterrows():
-        nombre = row["ZONENAME"]; demanda = float(row.get("Demanda_m3_dia",0))
+        nombre = row.get("ZONENAME","NA"); demanda = float(row.get("Demanda_m3_dia",0))
         if demanda > 0:
             _, restante, viajes, costo, consumo = asignar_pozos(row.geometry.centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
             cobertura = (1-restante/demanda)*100 if demanda>0 else 0
@@ -258,26 +262,28 @@ elif modo == "Resumen general":
 
     # ---- Distritos ----
     resumen_distritos = []
-    for _, row in distritos_gdf.iterrows():
-        nombre = row["NOMBDIST"]; demanda = float(row.get("Demanda_Distrito_m3_30_lhd",0))
-        if demanda > 0:
-            _, restante, viajes, costo, consumo = asignar_pozos(row.geometry.centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
-            cobertura = (1-restante/demanda)*100 if demanda>0 else 0
-            resumen_distritos.append([nombre, demanda, viajes, costo, consumo, restante, cobertura])
+    if not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
+        for _, row in distritos_gdf.iterrows():
+            nombre = row.get("NOMBDIST","NA"); demanda = float(row.get("Demanda_Distrito_m3_30_lhd",0))
+            if demanda > 0:
+                _, restante, viajes, costo, consumo = asignar_pozos(row.geometry.centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
+                cobertura = (1-restante/demanda)*100 if demanda>0 else 0
+                resumen_distritos.append([nombre, demanda, viajes, costo, consumo, restante, cobertura])
     df_dis = pd.DataFrame(resumen_distritos, columns=["Distrito","Demanda","Viajes","Costo","Consumo","Faltante","Cobertura_%"])
     st.markdown("### 🏙️ Distritos"); st.dataframe(df_dis)
     st.plotly_chart(px.bar(df_dis, x="Distrito", y="Costo", title="Costo por distrito"), use_container_width=True)
 
     # ---- Combinada ----
-    criticos = ["ATE","LURIGANCHO","SAN_JUAN_DE_LURIGANCHO","EL_AGUSTINO","SANTA_ANITA"]
-    rows = distritos_gdf[distritos_gdf["NOMBDIST"].isin(criticos)]
-    demanda = rows["Demanda_Distrito_m3_30_lhd"].sum()
-    _, restante, viajes, costo, consumo = asignar_pozos(unary_union(rows.geometry).centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
+    if not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
+        criticos = ["ATE","LURIGANCHO","SAN_JUAN_DE_LURIGANCHO","EL_AGUSTINO","SANTA_ANITA"]
+        rows = distritos_gdf[distritos_gdf["NOMBDIST"].isin(criticos)]
+        demanda = rows["Demanda_Distrito_m3_30_lhd"].sum()
+        _, restante, viajes, costo, consumo = asignar_pozos(unary_union(rows.geometry).centroid, demanda, escenario_sel, cisterna_sel, pozos_gdf)
 
-    st.markdown("### 🌀 Combinación crítica de distritos")
-    df_comb = pd.DataFrame({
-        "Distrito": criticos,
-        "Demanda": [rows.loc[rows["NOMBDIST"]==d,"Demanda_Distrito_m3_30_lhd"].values[0] for d in criticos]
-    })
-    st.dataframe(df_comb)
-    st.plotly_chart(px.bar(df_comb, x="Distrito", y="Demanda", title="Demanda en combinación crítica"), use_container_width=True)
+        st.markdown("### 🌀 Combinación crítica de distritos")
+        df_comb = pd.DataFrame({
+            "Distrito": criticos,
+            "Demanda": [rows.loc[rows["NOMBDIST"]==d,"Demanda_Distrito_m3_30_lhd"].values[0] for d in criticos if d in rows["NOMBDIST"].values]
+        })
+        st.dataframe(df_comb)
+        st.plotly_chart(px.bar(df_comb, x="Distrito", y="Demanda", title="Demanda en combinación crítica"), use_container_width=True)
