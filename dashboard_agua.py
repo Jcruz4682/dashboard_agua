@@ -132,65 +132,58 @@ def agregar_leyenda(m):
 
 def cargar_shapefile(nombre, solo_poligonos=False):
     try:
-        gdf = gpd.read_file(os.path.join(data_dir, nombre))
+        # Intentar leer SHP
+        ruta = os.path.join(data_dir, nombre)
+        gdf = gpd.read_file(ruta)
+    except Exception:
+        # Si falla, probar con .gpkg
+        base = nombre.replace(".shp", ".gpkg")
+        ruta = os.path.join(data_dir, base)
+        gdf = gpd.read_file(ruta)
 
-        # 1. Eliminar geometrías vacías o nulas
+    # --- Limpiar geometrías ---
+    gdf = gdf[~gdf["geometry"].isna()].copy()
+    gdf = gdf[~gdf.geometry.is_empty].copy()
+
+    def fix_geom(g):
+        if g is None or g.is_empty:
+            return None
+        g = make_valid(g)
+        if g.geom_type == "GeometryCollection":
+            polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
+            if not polys:
+                return None
+            g = unary_union(polys)
+        if g.geom_type not in ["Polygon", "MultiPolygon"]:
+            return None
+        return g
+
+    gdf["geometry"] = gdf["geometry"].apply(fix_geom)
+    gdf = gdf[~gdf["geometry"].isna()].copy()
+
+    if solo_poligonos:
+        def to_multipolygon(geom):
+            if geom is None or geom.is_empty:
+                return None
+            if geom.geom_type == "Polygon":
+                return MultiPolygon([geom])
+            if geom.geom_type == "MultiPolygon":
+                return geom
+            return None
+        gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
         gdf = gdf[~gdf["geometry"].isna()].copy()
-        gdf = gdf[~gdf.geometry.is_empty].copy()
 
-        def fix_geom(g):
-            if g is None or g.is_empty:
-                return None
-            g = make_valid(g)
+    gdf["geometry"] = gdf["geometry"].buffer(0)
 
-            # Si es GeometryCollection, extraer solo polígonos
-            if g.geom_type == "GeometryCollection":
-                polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
-                if not polys:
-                    return None
-                g = unary_union(polys)
+    return gdf.to_crs(epsg=4326)
 
-            # Si no es polígono, descartamos
-            if g.geom_type not in ["Polygon", "MultiPolygon"]:
-                return None
-
-            return g
-
-        gdf["geometry"] = gdf["geometry"].apply(fix_geom)
-
-        # 2. Filtrar otra vez cualquier None
-        gdf = gdf[~gdf["geometry"].isna()].copy()
-
-        # 3. Convertir a MultiPolygon si se pide solo_poligonos
-        if solo_poligonos:
-            def to_multipolygon(geom):
-                if geom is None or geom.is_empty:
-                    return None
-                if geom.geom_type == "Polygon":
-                    return MultiPolygon([geom])
-                if geom.geom_type == "MultiPolygon":
-                    return geom
-                return None
-
-            gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
-            gdf = gdf[~gdf["geometry"].isna()].copy()
-
-        # 4. Forzar geometrías válidas con buffer(0)
-        gdf["geometry"] = gdf["geometry"].buffer(0)
-
-        # 5. Proyección final
-        return gdf.to_crs(epsg=4326)
-
-    except Exception as e:
-        st.error(f"Error al cargar {nombre}: {e}")
-        return gpd.GeoDataFrame(columns=["geometry"])
 
 
 
 # ========= CARGA DE DATOS =========
-sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN_limpio.shp", solo_poligonos=True)
-distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio_limpio.shp", solo_poligonos=True)
-pozos_gdf = cargar_shapefile("Pozos_limpio.shp")
+sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp", solo_poligonos=True)
+distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio.shp", solo_poligonos=True)
+pozos_gdf    = cargar_shapefile("Pozos.shp")
 
 try:
     demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
