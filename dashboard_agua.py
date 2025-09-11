@@ -10,6 +10,8 @@ import pandas as pd
 import geopandas as gpd
 import folium
 from shapely.ops import unary_union
+from shapely.geometry import Point
+from shapely.validation import make_valid
 from streamlit_folium import st_folium
 import plotly.express as px
 
@@ -128,21 +130,35 @@ def agregar_leyenda(m):
     m.get_root().html.add_child(folium.Element(legend_html))
     return m
 
-# ========= CARGA DE DATOS =========
 def cargar_shapefile(nombre):
     try:
         gdf = gpd.read_file(os.path.join(data_dir, nombre))
-        gdf["geometry"] = gdf["geometry"].buffer(0)   # reparar geometrías inválidas
+        gdf = gdf[~gdf["geometry"].isna()].copy()
+        gdf["geometry"] = gdf["geometry"].apply(lambda g: make_valid(g) if g is not None else None)
+        gdf["geometry"] = gdf["geometry"].buffer(0)
         return gdf.to_crs(epsg=4326)
     except Exception as e:
         st.error(f"Error al cargar {nombre}: {e}")
         return gpd.GeoDataFrame(columns=["geometry"])
 
+def dibujar_pozos(resultados, m):
+    for _, aporte, v, c, cons, dist, g in resultados:
+        if g is not None:
+            try:
+                if isinstance(g, Point):
+                    lat, lon = g.y, g.x
+                else:
+                    lat, lon = g.centroid.y, g.centroid.x
+                folium.CircleMarker([lat, lon], radius=6, color="blue", fill=True).add_to(m)
+            except Exception:
+                continue
+    return m
+
+# ========= CARGA DE DATOS =========
 sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp")
 distritos_gdf = cargar_shapefile("DISTRITOS_Final.shp")
 pozos_gdf = cargar_shapefile("Pozos.shp")
 
-# Cargar CSVs
 try:
     demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
     demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
@@ -150,7 +166,6 @@ except Exception as e:
     st.error(f"No se pudo cargar CSVs: {e}")
     st.stop()
 
-# Normalizar claves y merge
 if not sectores_gdf.empty:
     sectores_gdf["ZONENAME"] = sectores_gdf["ZONENAME"].apply(normalizar)
     demandas_sectores["ZONENAME"] = demandas_sectores["ZONENAME"].apply(normalizar)
@@ -175,8 +190,7 @@ if modo == "Sector" and not sectores_gdf.empty:
 
     m = folium.Map(location=[row.geometry.centroid.y, row.geometry.centroid.x], zoom_start=13, tiles="cartodbpositron")
     folium.GeoJson(row.geometry, style_function=lambda x: {"color":"red","fillOpacity":0.3}).add_to(m)
-    for _, aporte, v, c, cons, dist, g in resultados:
-        folium.CircleMarker([g.y, g.x], radius=6, color="blue", fill=True).add_to(m)
+    m = dibujar_pozos(resultados, m)
     m = agregar_leyenda(m)
     st_folium(m, width=900, height=500)
 
@@ -196,8 +210,7 @@ elif modo == "Distrito" and not distritos_gdf.empty:
 
     m = folium.Map(location=[row.geometry.centroid.y, row.geometry.centroid.x], zoom_start=11, tiles="cartodbpositron")
     folium.GeoJson(row.geometry, style_function=lambda x: {"color":"green","fillOpacity":0.2}).add_to(m)
-    for _, aporte, v, c, cons, dist, g in resultados:
-        folium.CircleMarker([g.y, g.x], radius=6, color="blue", fill=True).add_to(m)
+    m = dibujar_pozos(resultados, m)
     m = agregar_leyenda(m)
     st_folium(m, width=900, height=500)
 
@@ -219,8 +232,7 @@ elif modo == "Combinación Distritos" and not distritos_gdf.empty:
 
         m = folium.Map(location=[geom_union.centroid.y, geom_union.centroid.x], zoom_start=10, tiles="cartodbpositron")
         folium.GeoJson(geom_union, style_function=lambda x: {"color":"purple","fillOpacity":0.2}).add_to(m)
-        for _, aporte, v, c, cons, dist, g in resultados:
-            folium.CircleMarker([g.y, g.x], radius=6, color="blue", fill=True).add_to(m)
+        m = dibujar_pozos(resultados, m)
         m = agregar_leyenda(m)
         st_folium(m, width=900, height=500)
 
