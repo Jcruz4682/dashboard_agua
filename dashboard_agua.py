@@ -135,9 +135,21 @@ def cargar_shapefile(nombre, solo_poligonos=False):
         gdf = gpd.read_file(os.path.join(data_dir, nombre))
         gdf = gdf[~gdf["geometry"].isna()].copy()
         gdf["geometry"] = gdf["geometry"].apply(lambda g: make_valid(g) if g is not None else None)
-        gdf["geometry"] = gdf["geometry"].buffer(0)
+
+        def to_multipolygon(geom):
+            if geom is None:
+                return None
+            if geom.geom_type == "Polygon":
+                return MultiPolygon([geom])
+            if geom.geom_type == "MultiPolygon":
+                return geom
+            return None
+
         if solo_poligonos:
-            gdf = gdf[gdf.geometry.apply(lambda g: isinstance(g, (Polygon, MultiPolygon)))]
+            gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
+            gdf = gdf[~gdf["geometry"].isna()].copy()
+
+        gdf["geometry"] = gdf["geometry"].buffer(0)
         return gdf.to_crs(epsg=4326)
     except Exception as e:
         st.error(f"Error al cargar {nombre}: {e}")
@@ -158,10 +170,15 @@ def dibujar_pozos(resultados, m):
 
 # ========= CARGA DE DATOS =========
 sectores_gdf = cargar_shapefile("Sectores_F1_ENFEN.shp", solo_poligonos=True)
-# distritos_gdf = cargar_shapefile("DISTRITOS_Final.shp", solo_poligonos=True)   # ⛔ no uses este
-distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio.shp", solo_poligonos=True)  # ✅ usa el shapefile limpio
+distritos_gdf = cargar_shapefile("DISTRITOS_Final_limpio.shp", solo_poligonos=True)
 pozos_gdf = cargar_shapefile("Pozos.shp")
 
+try:
+    demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
+    demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
+except Exception as e:
+    st.error(f"No se pudo cargar CSVs: {e}")
+    st.stop()
 
 # --- Merge con validaciones ---
 if not sectores_gdf.empty and "ZONENAME" in sectores_gdf.columns:
@@ -177,7 +194,7 @@ if not distritos_gdf.empty and "NOMBDIST" in distritos_gdf.columns:
         left_on="NOMBDIST", right_on="Distrito", how="left"
     )
 
-# ========= LÓGICA =========
+# ========= LÓGICA PRINCIPAL =========
 if modo == "Sector" and not sectores_gdf.empty:
     sectores_ids = sorted(sectores_gdf["ZONENAME"].dropna().unique().tolist())
     sector_sel = st.sidebar.selectbox("Selecciona un sector", sectores_ids)
