@@ -128,17 +128,16 @@ def agregar_leyenda(m):
 sectores_gdf = gpd.read_file(os.path.join(data_dir, "Sectores_F1_ENFEN.shp")).to_crs(epsg=4326)
 distritos_gdf = gpd.read_file(os.path.join(data_dir, "DISTRITOS_Final.shp")).to_crs(epsg=4326)
 pozos_gdf = gpd.read_file(os.path.join(data_dir, "Pozos.shp")).to_crs(epsg=4326)
+
+# 🔧 Reparar geometrías inválidas automáticamente
+sectores_gdf["geometry"] = sectores_gdf["geometry"].buffer(0)
+distritos_gdf["geometry"] = distritos_gdf["geometry"].buffer(0)
+pozos_gdf["geometry"] = pozos_gdf["geometry"].buffer(0)
+
+# Cargar CSV
 demandas_sectores = pd.read_csv(os.path.join(data_dir, "Demandas_Sectores_30lhd.csv"))
 demandas_distritos = pd.read_csv(os.path.join(data_dir, "Demandas_Distritos_30lhd.csv"))
 
-sectores_gdf["ZONENAME"] = sectores_gdf["ZONENAME"].apply(normalizar)
-demandas_sectores["ZONENAME"] = demandas_sectores["ZONENAME"].apply(normalizar)
-distritos_gdf["NOMBDIST"] = distritos_gdf["NOMBDIST"].apply(normalizar)
-demandas_distritos["Distrito"] = demandas_distritos["Distrito"].apply(normalizar)
-
-sectores_gdf = sectores_gdf.merge(demandas_sectores[["ZONENAME","Demanda_m3_dia"]], on="ZONENAME", how="left")
-distritos_gdf = distritos_gdf.merge(demandas_distritos[["Distrito","Demanda_Distrito_m3_30_lhd"]],
-                                    left_on="NOMBDIST", right_on="Distrito", how="left")
 
 # ========= SECTOR =========
 if modo == "Sector":
