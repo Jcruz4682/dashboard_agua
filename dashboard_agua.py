@@ -132,50 +132,54 @@ def agregar_leyenda(m):
 
 def cargar_shapefile(nombre, solo_poligonos=False):
     try:
-        # Intentar leer SHP
-        ruta = os.path.join(data_dir, nombre)
-        gdf = gpd.read_file(ruta)
-    except Exception:
-        # Si falla, probar con .gpkg
-        base = nombre.replace(".shp", ".gpkg")
-        ruta = os.path.join(data_dir, base)
-        gdf = gpd.read_file(ruta)
+        gdf = gpd.read_file(os.path.join(data_dir, nombre))
 
-    # --- Limpiar geometrías ---
-    gdf = gdf[~gdf["geometry"].isna()].copy()
-    gdf = gdf[~gdf.geometry.is_empty].copy()
+        # Quitar geometrías nulas o vacías
+        gdf = gdf[~gdf["geometry"].isna()].copy()
+        gdf = gdf[~gdf.geometry.is_empty].copy()
 
-    def fix_geom(g):
-        if g is None or g.is_empty:
-            return None
-        g = make_valid(g)
-        if g.geom_type == "GeometryCollection":
-            polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
-            if not polys:
+        def fix_geom(g):
+            if g is None or g.is_empty:
                 return None
-            g = unary_union(polys)
-        if g.geom_type not in ["Polygon", "MultiPolygon"]:
-            return None
-        return g
-
-    gdf["geometry"] = gdf["geometry"].apply(fix_geom)
-    gdf = gdf[~gdf["geometry"].isna()].copy()
-
-    if solo_poligonos:
-        def to_multipolygon(geom):
-            if geom is None or geom.is_empty:
+            g = make_valid(g)
+            if g.geom_type == "GeometryCollection":
+                polys = [geom for geom in g.geoms if geom.geom_type in ["Polygon", "MultiPolygon"]]
+                if not polys:
+                    return None
+                g = unary_union(polys)
+            if g.geom_type not in ["Polygon", "MultiPolygon"]:
                 return None
-            if geom.geom_type == "Polygon":
-                return MultiPolygon([geom])
-            if geom.geom_type == "MultiPolygon":
-                return geom
-            return None
-        gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
+            return g
+
+        gdf["geometry"] = gdf["geometry"].apply(fix_geom)
         gdf = gdf[~gdf["geometry"].isna()].copy()
 
-    gdf["geometry"] = gdf["geometry"].buffer(0)
+        # Forzar a MultiPolygon si corresponde
+        if solo_poligonos:
+            def to_multipolygon(geom):
+                if geom is None or geom.is_empty:
+                    return None
+                try:
+                    if geom.geom_type == "Polygon":
+                        return MultiPolygon([geom])
+                    if geom.geom_type == "MultiPolygon":
+                        return geom
+                    return None
+                except Exception:
+                    return None
 
-    return gdf.to_crs(epsg=4326)
+            gdf["geometry"] = gdf["geometry"].apply(to_multipolygon)
+            gdf = gdf[~gdf["geometry"].isna()].copy()
+
+        # Último fix: buffer(0) asegura validez topológica
+        gdf["geometry"] = gdf["geometry"].buffer(0)
+
+        return gdf.to_crs(epsg=4326)
+
+    except Exception as e:
+        st.error(f"Error al cargar {nombre}: {e}")
+        return gpd.GeoDataFrame(columns=["geometry"])
+
 
 
 
