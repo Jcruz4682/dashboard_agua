@@ -1,0 +1,7 @@
+streamlit==1.37.0
+pandas==2.2.2
+geopandas==0.14.4
+folium==0.17.0
+shapely==2.0.4
+streamlit-folium==0.22.0
+plotly==5.22.0

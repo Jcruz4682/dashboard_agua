@@ -1,0 +1,3 @@
+Para acceder a anaconda: 
+conda activate streamlit_env
+streamlit run C:\Users\jcruzm\Documents\dashboard_agua.py --server.port 8502 --server.address 127.0.0.1
